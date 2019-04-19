@@ -65,7 +65,7 @@ class Tracker:
         # plt.pause(0.01)
         # plt.draw()
 
-        # hist = cv2.normalize(hist, hist).flatten()
+        hist = cv2.normalize(hist, hist)
         hist = hist.flatten()
         return hist
 
