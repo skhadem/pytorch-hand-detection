@@ -1,7 +1,8 @@
 import numpy as np
 import cv2
 
-class Regions:
+
+class BBox:
     def __init__(self, regions=None):
         self._init()
         if regions is not None:
@@ -11,7 +12,6 @@ class Regions:
         self.num_regions = 0
         self.center = None
         self.regions = [[]]
-
 
     def add_region(self, top_left, size):
         top_left = np.array(top_left)
@@ -33,8 +33,7 @@ class Regions:
         max_x = self.regions[0][0].bottom_right[0]
         new_max_x = area.regions[0][0].bottom_right[0]
 
-
-        if  max_y == new_max_y:
+        if max_y == new_max_y:
             shift = len(area.regions)
             # left
             if max_x > new_max_x:
@@ -43,256 +42,83 @@ class Regions:
             else:
                 self.regions = self.regions[shift:]
 
-
         else:
             shift = len(area.regions[0])
             # top
             if max_y > new_max_y:
-                for x in range(0,len(self.regions)):
+                for x in range(0, len(self.regions)):
                     self.regions[x] = self.regions[x][:-shift]
             # bottom
             else:
-                for x in range(0,len(self.regions)):
+                for x in range(0, len(self.regions)):
                     self.regions[x] = self.regions[x][shift:]
 
         self.add_area(area)
-
 
     def potential(self, reg):
         # TODO: filter more
         row = self._add_region(reg)
         self._sort_row(row)
 
-    def get_bbox(self):
+    def get_corners(self):
         top_left = self.regions[0][0].top_left
         bottom_right = self.regions[-1][-1].bottom_right
 
         return top_left, bottom_right
 
-
     def center_region(self):
-        y_idx = len(self.regions)
-        x_idx = 0
+        x_idx = len(self.regions)
+        y_idx = 0
         for row in self.regions:
-            x_idx += len(row)
-        x_idx = x_idx // y_idx
+            y_idx += len(row)
+        y_idx = y_idx // x_idx
         x_idx, y_idx = x_idx // 2, y_idx // 2
 
         return self.regions[x_idx-1][y_idx]
 
-    def get_search_region(self, active_area, threshold=1):
-        top_left_x, top_left_y = self.get_region_idx(active_area.regions[0][0])
-        bottom_right_x, bottom_right_y = self.get_region_idx(active_area.regions[-1][-1])
-
-        regions = Regions()
-
-        rows = []
-        for x in range(top_left_x - threshold, top_left_x):
-            if x >= 0:
-                for y in range(top_left_y, bottom_right_y + 1):
-                    if y < len(self.regions[x]):
-                        rows.append(regions._add_region(self.regions[x][y]))
-
-        for x in range(bottom_right_x + 1, bottom_right_x + 1 + threshold):
-            if x < len(self.regions):
-                for y in range(top_left_y, bottom_right_y + 1):
-                    if y < len(self.regions[x]):
-                        rows.append(regions._add_region(self.regions[x][y]))
-
-        for x in range(top_left_x, bottom_right_x + 1):
-            if x < len(self.regions):
-                for y in range(top_left_y - threshold, top_left_y):
-                    if y >=0:
-                        rows.append(regions._add_region(self.regions[x][y]))
-
-        for x in range(top_left_x, bottom_right_x + 1):
-            if x < len(self.regions):
-                for y in range(bottom_right_y + 1, bottom_right_y + 1 + threshold):
-                    if y < len(self.regions[x]):
-                        rows.append(regions._add_region(self.regions[x][y]))
-
-        for x in range(top_left_x - threshold, bottom_right_x + threshold + 1):
-            if x < len(self.regions) and x >= 0:
-                for y in range(top_left_y - threshold, bottom_right_y + threshold + 1):
-                    if y < len(self.regions[x]) and y >= 0:
-                        if (x < top_left_x or x > bottom_right_x) and (y < top_left_y or y > bottom_right_y):
-                            rows.append(regions._add_region(self.regions[x][y]))
-
-        for row in list(set(rows)):
-            regions._sort_row(row)
-
-        return regions
-
     def get_search_regions(self, active_area, threshold=1):
+        """
+        Takes the active region and returns the 9 new potential regions.
+
+
+        Positions of the new top lefts are:
+
+        | ----------------------- |
+        | -----936--------------- |
+        | -----714xxxx----------- |
+        | -----825---x----------- |
+        | ------x----x----------- |
+        | ------xxxxxx----------- |
+        | ----------------------- |
+        | ----------------------- |
+
+
+        :param active_area: The current active Regions
+        :param threshold: The amount of regions to shift by
+        :return: [Regions]
+        """
         top_left_x, top_left_y = self.get_region_idx(active_area.regions[0][0])
         bottom_right_x, bottom_right_y = self.get_region_idx(active_area.regions[-1][-1])
 
-        left_regions = Regions()
-        right_regions = Regions()
-        top_regions = Regions()
-        bottom_regions = Regions()
-        top_left_regions = Regions()
-        top_right_regions = Regions()
-        bottom_left_regions = Regions()
-        bottom_right_regions = Regions()
+        rv = [BBox() for _ in range(0, 9)]
 
+        x_mult = [0, 1, -1]
+        y_mult = [0, 1, -1]
 
-        # left
-        for x in range(top_left_x - threshold, top_left_x):
-            if x >= 0:
-                for y in range(top_left_y, bottom_right_y + 1):
-                    if y < len(self.regions[x]):
-                        left_regions._add_region(self.regions[x][y])
+        i = 0
+        for xm in x_mult:
+            for ym in y_mult:
 
-        # right
-        for x in range(bottom_right_x + 1, bottom_right_x + 1 + threshold):
-            if x < len(self.regions):
-                for y in range(top_left_y, bottom_right_y + 1):
-                    if y < len(self.regions[x]):
-                        right_regions._add_region(self.regions[x][y])
+                rows = []
+                for x in range(top_left_x + (xm * threshold), bottom_right_x + 1 + (xm * threshold)):
+                    if x < len(self.regions) and x >= 0:
+                        for y in range(top_left_y + (ym * threshold), bottom_right_y + 1 + (ym * threshold)):
+                            if y < len(self.regions[x]) and y >= 0:
+                                rows.append(rv[i]._add_region(self.regions[x][y]))
 
-        # top
-        for x in range(top_left_x, bottom_right_x + 1):
-            if x < len(self.regions):
-                for y in range(top_left_y - threshold, top_left_y):
-                    if y >=0:
-                        top_regions._add_region(self.regions[x][y])
-        # bottom
-        for x in range(top_left_x, bottom_right_x + 1):
-            if x < len(self.regions):
-                for y in range(bottom_right_y + 1, bottom_right_y + 1 + threshold):
-                    if y < len(self.regions[x]):
-                        bottom_regions._add_region(self.regions[x][y])
-
-        return [left_regions, right_regions, top_regions, bottom_regions]
-
-
-    def get_search_regions_v2(self, active_area, threshold=1):
-        top_left_x, top_left_y = self.get_region_idx(active_area.regions[0][0])
-        bottom_right_x, bottom_right_y = self.get_region_idx(active_area.regions[-1][-1])
-
-        left_regions = Regions()
-        right_regions = Regions()
-        top_regions = Regions()
-        bottom_regions = Regions()
-        top_left_regions = Regions()
-        top_right_regions = Regions()
-        bottom_left_regions = Regions()
-        bottom_right_regions = Regions()
-
-        rv = [left_regions, right_regions, top_regions, bottom_regions,
-                top_left_regions, top_right_regions, bottom_left_regions,
-                bottom_right_regions]
-
-        rows = []
-        # left
-        for x in range(top_left_x - threshold, bottom_right_x + 1 - threshold):
-            if x < len(self.regions) and x >= 0:
-                for y in range(top_left_y, bottom_right_y + 1):
-                    if y < len(self.regions[x]) and y >= 0:
-                        rows.append(left_regions._add_region(self.regions[x][y]))
-
-        for row in rows:
-            left_regions._sort_row(row)
-        rows = []
-
-        # right
-        for x in range(top_left_x + threshold, bottom_right_x + 1 + threshold):
-            if x < len(self.regions) and x >= 0:
-                for y in range(top_left_y, bottom_right_y + 1):
-                    if y < len(self.regions[x]) and y >= 0:
-                        rows.append(right_regions._add_region(self.regions[x][y]))
-
-        for row in list(set(rows)):
-            right_regions._sort_row(row)
-        rows = []
-
-        # top
-        for x in range(top_left_x, bottom_right_x + 1):
-            if x < len(self.regions) and x >= 0:
-                for y in range(top_left_y - threshold, bottom_right_y + 1):
-                    if y < len(self.regions[x]) and y >= 0:
-                        rows.append(top_regions._add_region(self.regions[x][y]))
-
-        for row in list(set(rows)):
-            top_regions._sort_row(row)
-        rows = []
-
-        # bottom
-        for x in range(top_left_x, bottom_right_x + 1):
-            if x < len(self.regions) and x >= 0:
-                for y in range(top_left_y, bottom_right_y + 1 + threshold):
-                    if y < len(self.regions[x]) and y >= 0:
-                        rows.append(bottom_regions._add_region(self.regions[x][y]))
-
-        for row in list(set(rows)):
-            bottom_regions._sort_row(row)
-        rows = []
-
-        # top_left
-        for x in range(top_left_x - threshold, bottom_right_x + 1 - threshold):
-            if x < len(self.regions) and x >= 0:
-                for y in range(top_left_y - threshold, bottom_right_y + 1 - threshold):
-                    if y < len(self.regions[x]) and y >= 0:
-                        rows.append(top_left_regions._add_region(self.regions[x][y]))
-
-        for row in list(set(rows)):
-            top_left_regions._sort_row(row)
-        rows = []
-
-        # top_right
-        for x in range(top_left_x + threshold, bottom_right_x + 1 + threshold):
-            if x < len(self.regions) and x >= 0:
-                for y in range(top_left_y - threshold, bottom_right_y + 1 - threshold):
-                    if y < len(self.regions[x]) and y >= 0:
-                        rows.append(top_right_regions._add_region(self.regions[x][y]))
-
-        for row in list(set(rows)):
-            top_right_regions._sort_row(row)
-        rows = []
-
-        # bottom_left
-        for x in range(top_left_x + threshold, bottom_right_x + 1 + threshold):
-            if x < len(self.regions) and x >= 0:
-                for y in range(top_left_y + threshold, bottom_right_y + 1 + threshold):
-                    if y < len(self.regions[x]) and y >= 0:
-                        rows.append(bottom_left_regions._add_region(self.regions[x][y]))
-
-        for row in list(set(rows)):
-            bottom_left_regions._sort_row(row)
-        rows = []
-
-
-
-        # bottom_right
-        for x in range(top_left_x - threshold, bottom_right_x + 1 - threshold):
-            if x < len(self.regions) and x >= 0:
-                for y in range(top_left_y + threshold, bottom_right_y + 1 + threshold):
-                    if y < len(self.regions[x]) and y >= 0:
-                        rows.append(bottom_right_regions._add_region(self.regions[x][y]))
-
-        for row in list(set(rows)):
-            bottom_right_regions._sort_row(row)
-        rows = []
-
-        # signs = [1,-1]
-        # x_thresh_mults = [1,0,1,0]
-        # y_thresh_mults = [1,0]
-        #
-        # i = 0
-        # for sign in signs:
-        #     for x_thresh_mult in x_thresh_mults:
-        #         for y_thresh_mult in y_thresh_mults:
-        #
-        #             for x in range(top_left_x + (sign * x_thresh_mult * threshold),
-        #                             bottom_right_x + (sign * x_thresh_mult * threshold) + 1):
-        #                 if x < len(self.regions) and x >= 0:
-        #                     for y in range(top_left_y + (sign * y_thresh_mult * threshold),
-        #                                     bottom_right_y + (sign * y_thresh_mult * threshold) + 1):
-        #                         if y < len(self.regions[x]) and y >=0:
-        #                             rv[i]._add_region(self.regions[x][y])
-        #         i += 1
-
+                for row in rows:
+                    rv[i]._sort_row(row)
+                i += 1
 
         for regs in rv:
             if regs.num_regions != active_area.num_regions:
@@ -300,18 +126,52 @@ class Regions:
 
         return rv
 
+    def overlap_iter(self, size, overlap):
+        """
+        Iterable that will yield overlapping boxes, meant to be used with HOG
+        feature extraction
+        :param size: The size of each sub box
+        :param overlap: The amount to overlap each sub box by
+        :return: Will yeld a box
+        """
+
+        for x in range(0, len(self.regions), overlap):
+            for y in range(0, len(self.regions[x]), overlap):
+                subbox = BBox()
+                for xx in range(0, size[0]):
+                    for yy in range(0, size[1]):
+                        if (x + xx) < len(self.regions):
+                            if (y + yy) < len(self.regions[x + xx]):
+                                subbox._add_region(self.regions[x + xx][y + yy])
+
+                if subbox.num_regions == (size[0] * size[1]):
+                    yield subbox
+
+        return
+
+    def gradient_hist(self, img):
+        pass
+
     def get_region_idx(self, region):
-        for x in range(0,len(self.regions)):
-            for y in range(0,len(self.regions[x])):
+        """
+        Gets the index of a region if it exits, returns None else
+        TODO: make this raise something if the reg doesn't exist
+        :param region:
+        :return:
+        """
+        for x in range(0, len(self.regions)):
+            for y in range(0, len(self.regions[x])):
                 if all(region.center == self.regions[x][y].center):
                     return x, y
 
+        return None
+
     def get_global_min_y_reg(self, region=None):
-        if region == None:
+        if region is None:
             region = self
         min_y = 1e09
         reg = None
-        for i,row in enumerate(region.regions):
+        for i, row in enumerate(region.regions):
             y = row[0].top_left[1]
             if y < min_y:
                 min_y = y
@@ -319,18 +179,17 @@ class Regions:
         return reg, min_y
 
     def get_global_max_y_reg(self, region=None):
-        if region == None:
+        if region is None:
             region = self
         max_y = -1e09
         reg = None
-        for i,row in enumerate(region.regions):
+        for i, row in enumerate(region.regions):
             y = row[-1].top_left[1]
             if y > max_y:
                 max_y = y
                 reg = row[-1]
 
         return reg, max_y
-
 
     def contains_reg(self, region):
         rv = False
@@ -341,28 +200,31 @@ class Regions:
 
         return rv
 
-
     # %% drawing functions
 
     def draw_center_region(self, img):
-        self.center_region().draw(img, color=(0,0,255))
+        self.center_region().draw(img, color=(0, 0, 255))
 
-    def draw_center_point(self, img):
+    def draw_center_point(self, img, color=(0, 255, 0)):
         dims = self.regions[-1][-1].bottom_right - self.regions[0][0].top_left
         center_pt = (dims // 2) + self.regions[0][0].top_left
-        cv2.circle(img, tuple(center_pt), 5, (0,255,0), -1)
+        cv2.circle(img, tuple(center_pt), 5, color, -1)
 
-    def draw_edges(self, img):
-        top_left, bottom_right = self.get_bbox()
+    def draw_edges(self, img, color=(0, 255, 0)):
+        """
+        Draws a box araound the edges of a bbox
+        :param img:
+        :param color:
+        :return:
+        """
+        top_left, bottom_right = self.get_corners()
+        cv2.rectangle(img, tuple(top_left), tuple(bottom_right), color, 2)
+        # self.draw_center_point(img, color)
 
-        cv2.rectangle(img, tuple(top_left), tuple(bottom_right), (0,255,0), 2)
+        for reg in self:
+            reg.draw(img)
 
-        self.draw_center_point(img)
-
-        # for reg in self:
-        #     reg.draw(img)
-
-    # %% private funcitons
+    # %% private funcitons %%
 
     def _add_regions(self, regs):
         for reg in regs:
@@ -393,7 +255,7 @@ class Regions:
 
         row_index = 0
         insert_index = -1
-        for i,row in enumerate(self.regions):
+        for i, row in enumerate(self.regions):
             # only need to check the first one
             region = row[0]
             # newest has new min x
@@ -427,8 +289,8 @@ class Regions:
     # %% python funcitons
     def __str__(self):
         return_str = ""
-        for i in range(0,len(self.regions)):
-            for j in range(0,len(self.regions[i])):
+        for i in range(0, len(self.regions)):
+            for j in range(0, len(self.regions[i])):
                 return_str += str(self.regions[i][j])
                 if j != len(self.regions[i]) - 1:
                     return_str += ' -> '
@@ -445,7 +307,6 @@ class Regions:
                 yield reg
 
 
-
 class Region:
     def __init__(self, top_left, size):
         self.top_left = top_left
@@ -455,7 +316,8 @@ class Region:
         self.center = (top_left + self.bottom_right) // 2
 
     def check(self, pixels, reference):
-        hist = cv2.calcHist([pixels], [0,1,2], None, [32,32,32], [0,256,0,256,0,256])
+        """ Deprc. """
+        hist = cv2.calcHist([pixels], [0, 1, 2], None, [32]*3, [0, 256]*3)
         hist = cv2.normalize(hist, hist).flatten()
 
         score = cv2.compareHist(reference, hist, cv2.HISTCMP_CORREL)
@@ -465,90 +327,80 @@ class Region:
         else:
             self.active = False
 
-    def draw(self, img, color=(255,255,255)):
+    def draw(self, img, color=(255, 255, 255)):
         if self.active:
             color = (0, 255, 0)
 
-        cv2.rectangle(img, tuple(self.top_left), tuple(self.top_left + self.size - 2), color, thickness=1)
-
+        cv2.rectangle(img, tuple(self.top_left), tuple(self.top_left + self.size), color, thickness=1)
 
     def get_idxs(self):
         bottom_right = self.top_left + self.size
         return [self.top_left[1], bottom_right[1], self.top_left[0], bottom_right[0]]
 
+    def hist(self, img):
+        pixels = img[self.top_left[1]:self.bottom_right[1], self.top_left[0]:
+                     self.bottom_right[0]]
+
+        gradx = cv2.Sobel(pixels, cv2.CV_32F, 1, 0, ksize=1)
+        grady = cv2.Sobel(pixels, cv2.CV_32F, 0, 1, ksize=1)
+
+        mag, angle = cv2.cartToPolar(gradx, grady, angleInDegrees=True)
+
+    def hog(self, img):
+        pixels = img[self.top_left[1]:self.bottom_right[1], self.top_left[0]:
+                     self.bottom_right[0]]
+
+        sobelx = cv2.Sobel(pixels, cv2.CV_32F, 1, 0, ksize=1)
+
+        sobely = cv2.Sobel(pixels, cv2.CV_32F, 0, 1, ksize=1)
+
+        mag, angles = cv2.cartToPolar(sobelx, sobely, angleInDegrees=True)
+        mag = mag.flatten().reshape(mag.shape[0]*mag.shape[1], mag.shape[2])
+        angles = angles.flatten().reshape(angles.shape[0]*angles.shape[1], angles.shape[2])
+
+        maxes = np.argmax(mag, axis=1)
+
+        mag = mag[np.arange(mag.shape[0]), maxes]
+        angles = angles[np.arange(angles.shape[0]), maxes]
+        angles[angles > 180] -= 180
+
+        hog = np.zeros(9)
+
+        for i, angle in enumerate(angles):
+            ref = np.linspace(0, 160, 9)
+
+            if angle > 160:
+                ref[0] = 180
+
+            idxs = abs(ref - angle).argsort()[:2]
+
+            pcts = abs(ref[idxs] - angle) / np.sum(abs(ref[idxs] - angle))
+            pcts = 1 - pcts
+
+            ref[idxs] = -pcts
+            ref[ref > 0] = 0
+            ref = abs(ref)
+
+            hog += ref*mag[i]
+
+            # print(ref)
+            # print(angle)
+
+
+        #
+        # draw = pixels.copy()
+        # draw = cv2.resize(draw, (8*100,8*100), interpolation=cv2.INTER_NEAREST)
+        # for x in range(0,8):
+        #     for y in range(0,8):
+        #         x = x *100
+        #         y = y * 100
+        #
+            # cv2.imshow('split', pixels)
+            # cv2.waitKey(0)
+
+        return hog
+
+
+
     def __str__(self):
         return str(self.center)
-
-class Feature:
-    def __init__(self):
-        pass
-
-
-
-# class ActiveRegion(Regions):
-#     def __init__(self):
-#         super().__init__()
-#
-#     def add_region(self, reg):
-#         super().add_region(reg.top_left, reg.size)
-#
-#     def draw_edges(self, img):
-#         top_left = self.regions[0][0].top_left
-#         bottom_right = self.regions[-1][-1].bottom_right
-#
-#         cv2.rectangle(img, tuple(top_left), tuple(bottom_right), (0,255,0), 2)
-#
-#         self.draw_center_point(img)
-#
-#         for reg in self:
-#             reg.draw(img)
-
-
-class Tree:
-    def __init__(self):
-        self.root = None
-        self.size = 0
-
-    def leafs(self):
-        pass
-
-    def root(self):
-        return self.root
-
-    def __len__(self):
-        return self.size
-
-    def add_node(self, node):
-        if self.root is None:
-            self.root = node
-            return
-
-class Node:
-    def __init__(self, center, left=None, right=None, top=None, bottom=None):
-        self.center = center
-        self.left = left
-        self.right = right
-        self.top = top
-        self.bottom = bottom
-
-    def is_root(self):
-        return self.left is None or self.right is None \
-         or self.top is None or self.bottom is None
-
-
-class Graph:
-    def __init__(self):
-        self.center = None
-        self.num_verts = 0
-        self.verts = {}
-
-    def add_vert(self, center):
-        vert = Vertex(center)
-
-    def __len__(self):
-        return self.num_verts
-
-
-class Vertex:
-    def __init__(self, center):
-        self.center = center

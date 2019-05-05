@@ -1,29 +1,39 @@
 import cv2
 import numpy as np
-from data_structures import Regions
+from scipy import spatial
+
 import matplotlib.pyplot as plt
-from data_structures import Regions
+from data_structures import BBox
 
 
 class Tracker:
     def __init__(self, split, img_size, hist_shape=75, keep_hist=20):
-        self.active_region = Regions()
+        # what will track the object
+        self.active_region = BBox()
+
+        # will be one big box over the whole image to store all the regions
         self.regions = self.construct_regions(split, img_size)
+
+        # create histogram
         self.hist_shape = [hist_shape] * 3
         size = np.product(np.array(self.hist_shape)).astype('int')
-        self.history = np.array([np.zeros(size, dtype='float32') for _ in range(0, keep_hist)])
+        self.history = np.array([np.zeros(size, dtype='float32') for _ in range
+                                (0, keep_hist)])
+
         self.frame_num = 0
+
+        # viz
         fig = plt.figure()
         self.hist_plot = fig.add_subplot(1, 1, 1)
 
     def construct_regions(self, split, img_size):
         region_size = img_size // split
+        region_size = np.array([8,8])
 
         # regions = []
-        regions = Regions()
+        regions = BBox()
         for x in range(0, img_size[0], region_size[0]):
             for y in range(0, img_size[1], region_size[1]):
-                # regions.append(Region(np.array([x,y]), region_size))
                 regions.add_region((x, y), region_size)
 
         return regions
@@ -32,12 +42,15 @@ class Tracker:
         # _,img = cv2.threshold(img,127,255,cv2.THRESH_BINARY)
         # img[img<255-20] += 20
 
-        img = cv2.GaussianBlur(img, (15, 15), 30)
+        img = cv2.GaussianBlur(img, (15, 15), 5)
+
+        # cv2.imshow('sa', img)
+        # cv2.waitKey(10)
 
         return img
 
     def set_reference(self, img, top_left, bottom_right):
-        filtered = self.filter_img(img)
+        filtered = self.filter_img(img=img)
         ref_area = filtered[top_left[1]:bottom_right[1], top_left[0]:bottom_right[0]]
 
         # first time
@@ -69,10 +82,21 @@ class Tracker:
         hist = hist.flatten()
         return hist
 
-    def iir_filter(self, histogram, weight=1):
-        # self.history *= (1 - weight)
+    def iir_filter(self, histogram, weight=None):
+        """
+        Continuosly fliters the incoming histogram, optionally weighted
+        :param histogram: The newest histogram to add to the history
+        :param weight: How much to weight the new histogram
+        :return:
+        """
+        if weight is not None:
+            self.history *= (1 - weight)
+
+        # add to the history
         self.history[self.frame_num % len(self.history)] = histogram
-        # self.history[self.frame_num % len(self.history)] *= weight
+
+        if weight is not None:
+            self.history[self.frame_num % len(self.history)] *= weight
         self.ref_hist = np.mean(self.history[np.sum(self.history, axis=1) != 0], axis=0)
         # print(len(self.ref_hist[self.ref_hist == 0]) / len(self.ref_hist))
         # self.hist_plot.clear()
@@ -88,151 +112,197 @@ class Tracker:
 
         print("\n")
 
-    def test_draw(self, img):
-        # for row in self.regions.regions:
-        #     for reg in row:
-        #         reg.draw(img)
-
-        # for row in self.regions.regions:
-        #     for reg in row:
-        #         reg.draw(img)
-
-        draw = img.copy()
-        draw1 = img.copy()
-        draw2 = img.copy()
-        draw3 = img.copy()
-        draw4 = img.copy()
-
-        self.active_region.draw_edges(draw)
-        cv2.imshow('sa', draw)
-        cv2.waitKey(0)
-
-        # self.regions.center_region().draw(img, color=(0,0,255))
-
-        # regions = self.regions.get_search_region(self.active_region, threshold=3)
-
-        left_regions, right_regions, top_regions, bottom_regions = self.regions.get_search_regions(self.active_region,
-                                                                                                   threshold=2)
-        print(self.active_region)
-        self.active_region.shift_area(left_regions)
-        print(left_regions)
-        self.active_region.draw_edges(draw1)
-        cv2.imshow('sa', draw1)
-        cv2.waitKey(0)
-
-        left_regions, right_regions, top_regions, bottom_regions = self.regions.get_search_regions(self.active_region,
-                                                                                                   threshold=2)
-        self.active_region.shift_area(top_regions)
-        self.active_region.draw_edges(draw2)
-        cv2.imshow('sa', draw2)
-        cv2.waitKey(0)
-
-        left_regions, right_regions, top_regions, bottom_regions = self.regions.get_search_regions(self.active_region,
-                                                                                                   threshold=2)
-        self.active_region.shift_area(right_regions)
-        self.active_region.draw_edges(draw3)
-        cv2.imshow('sa', draw3)
-        cv2.waitKey(0)
-
-        left_regions, right_regions, top_regions, bottom_regions = self.regions.get_search_regions(self.active_region,
-                                                                                                   threshold=2)
-        self.active_region.shift_area(bottom_regions)
-        self.active_region.draw_edges(draw4)
-        cv2.imshow('sa', draw4)
-        cv2.waitKey(0)
-
     def track(self, img):
+        """
+        Main function to update the active region, should be called every frame
+        Computes the feature vector for potential new bounding boxes and then
+        shifts if the correlation is high enough
+        :param img: the image to track
+        :return: a copy of the img with the drawn active region
+        """
         self.frame_num += 1
+
         filtered = self.filter_img(img)
-
-        # sub_pot = 1
-        # for region in self.regions:
-        #     idxs = region.get_idxs()
-        #     roi = img[idxs[0]:idxs[1], idxs[2]:idxs[3]]
-        #     region.check(roi, self.ref_hist)
-        #
-        #
-        # #     colors = ('b','g','r')
-        # #     for i,c in enumerate(colors):
-        # #          histr = cv2.calcHist([roi],[i],None,[256],[0,256])
-        # #          plt.subplot(10,10,sub_pot)
-        # #          plt.plot(histr,color=c)
-        # #          plt.xlim([0,256])
-        # #     sub_pot += 1
-        # #
-        # #
-        # # plt.pause(0.05)
-        # # plt.draw()
-        # # plt.clf()
-        #
-        # for region in self.regions:
-        #     region.draw(img)
-        #
-        #
-        # cv2.imshow('tracking', img)
-        # cv2.waitKey(0)
-
-        # draw, draw1 = img.copy(), img.copy()
-
         draw = img.copy()
-        # self.active_region.draw_edges(draw)
-        search_regions = self.regions.get_search_regions_v2(self.active_region, threshold=2)
-        search_regions.append(self.active_region)
+
+        search_regions = self.regions.get_search_regions(self.active_region,
+                                                         threshold=1)
 
         features = []
         scores = []
         regions = []
 
         for i, regs in enumerate(search_regions):
+            # usually corner of image
             if regs.num_regions == 0:
                 scores.append(-1)
                 features.append([0])
                 continue
 
-            top_left, bottom_right = regs.get_bbox()
-            pixels = filtered[top_left[1]:bottom_right[1], top_left[0]:bottom_right[0]]
+            # regs.draw_edges(draw)
 
+            # get cropped region of potential region
+            top_left, bottom_right = regs.get_corners()
+            pixels = filtered[top_left[1]:bottom_right[1],
+                              top_left[0]:bottom_right[0]]
+
+            # calc and compare hist
             hist = np.array(self.calc_feature_hist(pixels))
-            score = cv2.compareHist(self.ref_hist, hist, cv2.HISTCMP_INTERSECT)
-
-            # print(names[i])
-            # self.compare(hist)
-
+            # score = cv2.compareHist(hist, self.ref_hist, cv2.HISTCMP_INTERSECT)
+            score = spatial.distance.cosine(hist, self.ref_hist)
             features.append(hist)
             scores.append(score)
 
         scores = np.array(scores)
-        # print(scores)
-        # cv2.waitKey(0)
 
-        if any(scores > 2):
-            best = np.argmax(scores)
-            self.active_region = search_regions[best]
+        # update
+        if any(scores > 0):
+            # best = np.argmax(scores)
+            best = np.argmin(scores)
+            if best != 0:
+                self.active_region = search_regions[best]
+                self.iir_filter(features[best], weight=None)
 
-            if self.active_region.num_regions == -1:
-                print('\n%s\n' % self.active_region.num_regions)
-                print(self.active_region)
-                cv2.imshow('debug', draw)
-                cv2.waitKey(0)
-
-            self.iir_filter(features[best], weight=0.9)
+        # draw
 
         font = cv2.FONT_HERSHEY_SIMPLEX
-        bottomLeftCornerOfText = (0, draw.shape[0] - 10)
-        fontScale = 0.6
-        fontColor = (0, 255, 0)
-        lineType = 2
+        bottom_left_corner = (0, draw.shape[0] - 10)
+        font_scale = 0.6
+        font_color = (0, 255, 0)
+        line_type = 2
 
         cv2.putText(draw, 'Frame: %s' % self.frame_num,
-                    bottomLeftCornerOfText,
+                    bottom_left_corner,
                     font,
-                    fontScale,
-                    fontColor,
-                    lineType)
+                    font_scale,
+                    font_color,
+                    line_type)
 
         self.active_region.draw_edges(draw)
 
-        # cv2.imshow('all', draw)
+        return draw
+
+    def track_hog(self, img):
+        """
+        Will track the region using a method of extracting an HOG feature
+        vector
+        :param img: The image to track
+        :return: a copy of img with the drawn active region
+        """
+        draw = img.copy()
+        # draw = self.filter_img(draw)
+
+        # filtered = cv2.cvtColor(draw, cv2.COLOR_BGR2GRAY)
+        filtered = np.float32(draw) / 255.0
+        sobelx = cv2.Sobel(filtered, cv2.CV_32F, 1, 0, ksize=1)
+        # absx = cv2.convertScaleAbs(sobelx)
+        absx = abs(sobelx)
+
+        sobely = cv2.Sobel(filtered, cv2.CV_32F, 0, 1, ksize=1)
+        # absy = cv2.convertScaleAbs(sobely)
+        absy = abs(sobely)
+
+        add = cv2.addWeighted(absx, 0.5, absy, 0.5, 0)
+        mag, angle = cv2.cartToPolar(sobelx, sobely, angleInDegrees=True)
+
+        # cv2.imshow('gradientx', absx)
+        # cv2.imshow('gradienty', absy)
+        # cv2.imshow('xy', mag)
+        #
         # cv2.waitKey(0)
+
+        test = cv2.resize(draw, (320, 640), interpolation=cv2.INTER_NEAREST)
+
+        # hog = self.active_region.regions[3][1].hog(img)
+        ref = np.linspace(0, 160, 9)
+        for reg in self.active_region:
+            hog = reg.hog(img)
+            # print(hog)
+
+            hog /= np.linalg.norm(hog)
+            # print(hog)
+            hog *= 12
+
+            center = reg.center * 5
+            for i, h in enumerate(hog):
+                x1 = center[0] - h * np.cos((ref[i] * np.pi / 180) + np.pi / 2)
+                y1 = center[1] - h * np.sin((ref[i] * np.pi / 180) + np.pi / 2)
+                p1 = np.array((x1, y1)).astype('int')
+
+                x2 = center[0] + h * np.cos((ref[i] * np.pi / 180) + np.pi / 2)
+                y2 = center[1] + h * np.sin((ref[i] * np.pi / 180) + np.pi / 2)
+                p2 = np.array((x2, y2)).astype('int')
+
+                cv2.line(test, tuple(p1), tuple(p2), (0, 0, 255),
+                thickness=2)
+
+        # center = self.active_region.center_region().center
+
+        # cv2.circle(draw, tuple(center), 5, (0, 255, 0), -1)
+        #
+        # for angle in ref:
+        #
+        #     x = center[0] + 10 * np.cos((angle * np.pi / 180) + np.pi / 2)
+        #     y = center[1] + 10 * np.sin((angle * np.pi / 180) + np.pi / 2)
+        #     p2 = np.array((x, y)).astype('int')
+        #     cv2.line(draw, tuple(center), tuple(p2), (0, 0, 255), thickness=1)
+        #
+
+        cv2.imshow('sa', test)
+
+        import matplotlib.pyplot as plt
+
+        from skimage.feature import hog
+        from skimage import data, exposure
+
+        image = img
+
+        fd, hog_image = hog(image, orientations=8, pixels_per_cell=(8, 8),
+                            cells_per_block=(1, 1), visualize=True,
+                            multichannel=True)
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 4), sharex=True,
+                                       sharey=True)
+
+        ax1.axis('off')
+        ax1.imshow(image, cmap=plt.cm.gray)
+        ax1.set_title('Input image')
+
+        # Rescale histogram for better display
+        hog_image_rescaled = exposure.rescale_intensity(hog_image,
+                                                        in_range=(0, 10))
+
+        ax2.axis('off')
+        ax2.imshow(hog_image_rescaled, cmap=plt.cm.gray)
+        ax2.set_title('Histogram of Oriented Gradients')
+        plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+        cv2.waitKey(0)
+
+        # self.active_region.draw_edges(draw)
+
+
+
+        #
+        # for box in self.active_region.overlap_iter((2, 2), 1):
+        #     box.draw_edges(draw, color=(255, 0, 0))
+        #
+        #     for reg in box:
+        #         reg.hist(filtered)
+        #
+        #     test = cv2.resize(draw, (320, 640))
+        #     cv2.imshow('sa', test)
+        #     cv2.waitKey(100)
 
         return draw

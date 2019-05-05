@@ -1,41 +1,34 @@
 import cv2
 import numpy as np
+import os
 
 from utils.img import get_size
 from Tracker import Tracker
 
 
 def main():
-    print("\nInitializing video connection ...\n")
-
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("Unable to initialize video connection")
-        return -1
-
-    _, img = cap.read()
-    split = 30
+    img = cv2.imread(os.path.abspath(os.path.dirname(__file__)) + '/bolt.png')
+    split = 8
     shape = get_size(img)
     tracker = Tracker(split, shape)
 
     init = False
 
-    h_w = (shape // split) * (4 * split / 10, 4 * split / 10)
-    h_w = h_w.astype('int')
 
-    top_left = (shape - h_w) // 2
-    bottom_right = top_left + h_w
+    top_left = np.array((0, 0))
+    bottom_right = shape
 
     while 1:
-        _, img = cap.read()
         draw = img.copy()
         # img = np.zeros(img.shape)
         if init:
             draw = tracker.track_hog(img)
+            break
         else:
-            draw = cv2.rectangle(draw, tuple(top_left + 2),
-                                 tuple(bottom_right + 2), (0, 255, 0),
-                                 thickness=2)
+            pass
+            # draw = cv2.rectangle(draw, tuple(top_left),
+            #                      tuple(bottom_right), (0, 255, 0),
+            #                      thickness=2)
 
         cv2.imshow('Video', draw)
         retval = cv2.waitKey(10)

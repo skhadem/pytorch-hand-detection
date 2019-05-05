@@ -1,7 +1,7 @@
-from data_structures import Regions
+from data_structures import BBox
 
 if __name__ == '__main__':
-    reg = Regions()
+    reg = BBox()
 
     reg.add_region((0,0), 1)
     reg.add_region((0,1), 1)

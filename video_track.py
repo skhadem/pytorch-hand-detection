@@ -7,7 +7,9 @@ from utils.img import get_size
 
 
 def main():
-    cap = cv2.VideoCapture(os.path.abspath(os.path.dirname(__file__)) + '/OJ.gif')
+    vid = 'OJ'
+    cap = cv2.VideoCapture(os.path.abspath(os.path.dirname(__file__)) +
+                           '/%s.gif'%vid)
     if not cap.isOpened():
         return -1
 
@@ -16,8 +18,13 @@ def main():
     size = get_size(frame)
     tracker = Tracker(split, size)
     init = False
-    top_left = np.array(([120, 90]))
-    bottom_right = np.array(([175, 124]))
+
+    if vid == 'OJ':
+        top_left = np.array(([120, 90]))
+        bottom_right = np.array(([175, 124]))
+    elif vid == 'bmw':
+        top_left = np.array(([66, 140]))
+        bottom_right = np.array(([125, 190]))
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -44,6 +51,7 @@ def main():
 
     cap.release()
     cv2.destroyAllWindows()
+
 
 if __name__ == '__main__':
     main()
